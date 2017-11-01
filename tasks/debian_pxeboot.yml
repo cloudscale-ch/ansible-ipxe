@@ -1,4 +1,10 @@
 ---
+- name: Install required packages
+  apt:
+    name: '{{ item }}'
+    state: 'present'
+    install_recommends: False
+  with_items: [ 'pax', 'cpio' ]
 
 - name: Create installer tftp directory
   file:
@@ -7,15 +13,92 @@
     owner: 'root'
     group: 'root'
     mode: '0755'
-  with_items:
-    - '{{ ipxe_debian_pxeboot_dists }}'
+  with_items: '{{ ipxe_debian_pxeboot_dists }}'
 
-- name: Download Debian netboot installer
-  get_url:
-    url: 'http://{{ item.0.mirror }}/{{ item.0.distro }}/dists/{{ item.0.release }}/main/installer-amd64/current/images/netboot/{{ item.0.distro }}-installer/amd64/{{ item.1 }}'
-    # dest: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.0.name }}/{{ item.1 }}'
-    dest: '{{ ipxe_tftp_root }}/{{ item.0.distro }}-installer/{{ item.0.release }}/{{ item.1 }}'
+- name: Create working direcotry structure
+  file:
+    path: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.0.distro }}-{{ item.0.release }}/{{ item.1 }}'
+    state: 'directory'
+    owner: 'root'
+    group: 'root'
+    mode: '0755'
   with_nested:
     - '{{ ipxe_debian_pxeboot_dists }}'
-    - [ 'linux', 'initrd.gz' ]
+    - ['initrd/etc/ssl/certs', 'initrd/usr/lib', 'initrd/usr/share/keyrings']
 
+- name: Create symlink to /etc/ssl/certs in working directory
+  file:
+    path: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.distro }}-{{ item.release }}/initrd/usr/lib/ssl'
+    src: '/etc/ssl'
+    state: 'link'
+    owner: 'root'
+    group: 'root'
+  with_items: '{{ ipxe_debian_pxeboot_dists }}'
+
+- name: Download netboot initrd
+  get_url:
+    url: 'https://{{ item.mirror }}/{{ item.distro }}/dists/{{ item.release }}/main/installer-amd64/{{ item.version }}/images/netboot/{{ item.distro }}-installer/amd64/initrd.gz'
+    dest: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.distro }}-{{ item.release }}/initrd.gz'
+    checksum: '{{ item.initrd_checksum }}'
+  register: initrd
+  with_items: '{{ ipxe_debian_pxeboot_dists }}'
+
+- name: Download netboot kernel
+  get_url:
+    url: 'https://{{ item.mirror }}/{{ item.distro }}/dists/{{ item.release }}/main/installer-amd64/{{ item.version }}/images/netboot/{{ item.distro }}-installer/amd64/linux'
+    dest: '{{ ipxe_tftp_root }}/{{ item.distro }}-installer/{{ item.release }}/linux'
+    checksum: '{{ item.kernel_checksum }}'
+  with_items: '{{ ipxe_debian_pxeboot_dists }}'
+
+- name: Download cloudscale repository key
+  get_url:
+    url: 'https://packages1.mgmt.cloudscale.ch/{{ item.distro }}/packages1.mgmt.cloudscale.ch.asc'
+    dest: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.distro }}-{{ item.release }}/repository.asc'
+  register: key_download
+  with_items: '{{ ipxe_debian_pxeboot_dists }}'
+
+- name: Convert repository key to GPG format
+  shell: 'gpg --yes
+          --output {{ ipxe_debian_pxeboot_workdir }}/{{ item.1.distro }}-{{ item.1.release }}/initrd/usr/share/keyrings/{{ item.1.distro }}-archive-keyring.gpg
+          --dearmor {{ ipxe_debian_pxeboot_workdir }}/{{ item.1.distro }}-{{ item.1.release }}/repository.asc'
+  when: key_download.results[item.0] | changed
+  register: key_convert
+  with_indexed_items: '{{ ipxe_debian_pxeboot_dists }}'
+
+- name: Create initrd part with repository key
+  shell: 'cd {{ ipxe_debian_pxeboot_workdir }}/{{ item.1.distro }}-{{ item.1.release }}/initrd
+          && pax -x sv4cpio -w usr/share | gzip -c > ../keyring.cpio.gz'
+  when: key_convert.results[item.0] | changed
+  register: key_cpio
+  with_indexed_items: '{{ ipxe_debian_pxeboot_dists }}'
+
+- name: Copy cloudscale CA certificate
+  copy:
+    src: '/usr/local/share/ca-certificates/pki/root-ca.cloudscale.ch.crt'
+    dest: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.distro }}-{{ item.release }}/initrd/etc/ssl/certs'
+    remote_src: True
+    owner: 'root'
+    group: 'root'
+    mode: '0644'
+  register: cert_copy
+  with_items: '{{ ipxe_debian_pxeboot_dists }}'
+
+- name: Run c_rehash on cloudscale CA certificate
+  shell: 'c_rehash {{ ipxe_debian_pxeboot_workdir }}/{{ item.1.distro }}-{{ item.1.release }}/initrd/etc/ssl/certs'
+  when: cert_copy.results[item.0] | changed
+  register: cert_rehash
+  with_indexed_items: '{{ ipxe_debian_pxeboot_dists }}'
+
+- name: Create initrd part with cloudscale CA certificate
+  shell: 'cd {{ ipxe_debian_pxeboot_workdir }}/{{ item.1.distro }}-{{ item.1.release }}/initrd
+          && pax -x sv4cpio -w usr/lib etc | gzip -c > ../cloudscale-ca.cpio.gz'
+  when: cert_rehash.results[item.0] | changed
+  register: cert_cpio
+  with_indexed_items: '{{ ipxe_debian_pxeboot_dists }}'
+
+- name: Concatenate initrd
+  shell: 'cat {{ ipxe_debian_pxeboot_workdir }}/{{ item.1.distro }}-{{ item.1.release }}/initrd.gz
+              {{ ipxe_debian_pxeboot_workdir }}/{{ item.1.distro }}-{{ item.1.release }}/*.cpio.gz
+              > {{ ipxe_tftp_root }}/{{ item.1.distro }}-installer/{{ item.1.release }}/initrd.gz'
+  when: initrd.results[item.0] | changed or key_cpio.results[item.0] | changed or cert_cpio.results[item.0] | changed
+  with_indexed_items: '{{ ipxe_debian_pxeboot_dists }}'
