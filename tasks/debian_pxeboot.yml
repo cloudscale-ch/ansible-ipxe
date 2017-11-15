@@ -50,9 +50,9 @@
     checksum: '{{ item.kernel_checksum }}'
   with_items: '{{ ipxe_debian_pxeboot_dists }}'
 
-- name: Download cloudscale repository key
+- name: Download internal repository key
   get_url:
-    url: 'https://packages1.mgmt.cloudscale.ch/{{ item.distro }}/packages1.mgmt.cloudscale.ch.asc'
+    url: 'https://{{ item.internal_mirror }}/{{ item.distro }}/{{ item.internal_mirror}}.asc'
     dest: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.distro }}-{{ item.release }}/repository.asc'
   register: key_download
   with_items: '{{ ipxe_debian_pxeboot_dists }}'
@@ -72,10 +72,10 @@
   register: key_cpio
   with_indexed_items: '{{ ipxe_debian_pxeboot_dists }}'
 
-- name: Copy cloudscale CA certificate
+- name: Copy internal CA certificate
   copy:
-    src: '/usr/local/share/ca-certificates/pki/root-ca.cloudscale.ch.crt'
-    dest: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.distro }}-{{ item.release }}/initrd/etc/ssl/certs'
+    src: '{{ ansible_local.pki.path }}/{{ ansible_local.pki.realm }}/internal/root.pem'
+    dest: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.distro }}-{{ item.release }}/initrd/etc/ssl/certs/internal-ca.crt'
     remote_src: True
     owner: 'root'
     group: 'root'
@@ -83,15 +83,15 @@
   register: cert_copy
   with_items: '{{ ipxe_debian_pxeboot_dists }}'
 
-- name: Run c_rehash on cloudscale CA certificate
+- name: Run c_rehash on internal CA certificate
   shell: 'c_rehash {{ ipxe_debian_pxeboot_workdir }}/{{ item.1.distro }}-{{ item.1.release }}/initrd/etc/ssl/certs'
   when: cert_copy.results[item.0] | changed
   register: cert_rehash
   with_indexed_items: '{{ ipxe_debian_pxeboot_dists }}'
 
-- name: Create initrd part with cloudscale CA certificate
+- name: Create initrd part with internal CA certificate
   shell: 'cd {{ ipxe_debian_pxeboot_workdir }}/{{ item.1.distro }}-{{ item.1.release }}/initrd
-          && pax -x sv4cpio -w usr/lib etc | gzip -c > ../cloudscale-ca.cpio.gz'
+          && pax -x sv4cpio -w usr/lib etc | gzip -c > ../internal-ca.cpio.gz'
   when: cert_rehash.results[item.0] | changed
   register: cert_cpio
   with_indexed_items: '{{ ipxe_debian_pxeboot_dists }}'
