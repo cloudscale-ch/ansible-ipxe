@@ -37,7 +37,7 @@
 
 - name: Download netboot initrd
   get_url:
-    url: 'https://{{ item.mirror }}/{{ item.distro }}/dists/{{ item.release }}/main/installer-amd64/{{ item.version }}/images/netboot/{{ item.distro }}-installer/amd64/initrd.gz'
+    url: 'https://{{ item.mirror }}/{{ item.distro }}/dists/{{ item.installer_release | default(item.release) }}/main/installer-amd64/{{ item.version }}/images/netboot/{{ item.distro }}-installer/amd64/initrd.gz'
     dest: '{{ ipxe_debian_pxeboot_workdir }}/{{ item.distro }}-{{ item.release }}/initrd.gz'
     checksum: '{{ item.initrd_checksum }}'
   register: initrd
@@ -45,7 +45,7 @@
 
 - name: Download netboot kernel
   get_url:
-    url: 'https://{{ item.mirror }}/{{ item.distro }}/dists/{{ item.release }}/main/installer-amd64/{{ item.version }}/images/netboot/{{ item.distro }}-installer/amd64/linux'
+    url: 'https://{{ item.mirror }}/{{ item.distro }}/dists/{{ item.installer_release | default(item.release) }}/main/installer-amd64/{{ item.version }}/images/netboot/{{ item.distro }}-installer/amd64/linux'
     dest: '{{ ipxe_tftp_root }}/{{ item.distro }}-installer/{{ item.release }}/linux'
     checksum: '{{ item.kernel_checksum }}'
   with_items: '{{ ipxe_debian_pxeboot_dists }}'
